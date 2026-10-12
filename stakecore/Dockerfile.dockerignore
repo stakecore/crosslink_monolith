@@ -1,0 +1,20 @@
+# Build context for stakecore/Dockerfile: an allow-list, because the repository
+# root also holds reviews, the book, Windows tooling and a protoc.exe.
+#
+# What is let through is the zebra-crosslink workspace plus every sibling one of
+# its manifests reaches with a `../` path. A new sibling upstream adds shows up as
+# a cargo "failed to read .../Cargo.toml" at the start of the build, not an hour in.
+*
+
+!zebra-crosslink
+!wallet
+!librustzcash
+!zebra-gui
+!clay-rs
+!tenderlink
+!patches
+# zebra-gui's build script resolves ../packaging/icons (only read on Windows).
+!packaging
+
+**/target
+**/.git

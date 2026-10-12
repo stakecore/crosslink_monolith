@@ -1,0 +1,196 @@
+name: stakecore image
+
+# Builds a headless zebrad image from this fork with stakecore/Dockerfile, proves
+# it starts, and only then publishes it to GHCR.
+#
+# The packaging (this file and stakecore/) lives on the `stakecore` branch; the
+# SOURCE that gets built is a separate ref, checked out next to it. Moving to a new
+# upstream release is therefore a one-line change of DEFAULT_REF below (or a manual
+# run with another ref), not a rebase of the packaging.
+#
+# Runs:
+#   - on a push to `stakecore` that touches the packaging: builds DEFAULT_REF
+#   - by hand (Actions → stakecore image → Run workflow): builds any tag, branch or
+#     commit of this fork, e.g. a branch carrying our own patch on top of a release
+#
+# The manual button only appears while this file is on the fork's DEFAULT branch.
+
+on:
+  push:
+    branches: [stakecore]
+    paths:
+      - "stakecore/**"
+      - ".github/workflows/stakecore-image.yml"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Source to build: a tag, branch or commit of this fork (empty = DEFAULT_REF)"
+        required: false
+        default: ""
+      tag:
+        description: "Image tag (empty = the ref, with / replaced by -)"
+        required: false
+        default: ""
+      start_test:
+        description: "Start the node for 90 s against the live network before publishing"
+        type: boolean
+        default: true
+
+env:
+  # The upstream release the featurenet currently runs. Tags are per-chain: the
+  # state directory name is compiled in, so a new release can mean a new network.
+  DEFAULT_REF: v14
+  IMAGE_NAME: zebra-crosslink
+
+permissions:
+  contents: read
+  packages: write
+
+# One build per source ref; a newer run for the same ref replaces the older one.
+concurrency:
+  group: stakecore-image-${{ inputs.ref || 'default' }}
+  cancel-in-progress: true
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    # A cold release build of zebrad (rocksdb, halo2, thin LTO) on a hosted runner.
+    timeout-minutes: 240
+    steps:
+      - name: Check out the packaging
+        uses: actions/checkout@v4
+        with:
+          path: packaging
+
+      - name: Check out the source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || env.DEFAULT_REF }}
+          path: src
+          # Tags are fetched by name; history is not needed.
+          fetch-depth: 1
+
+      - name: Resolve names
+        id: names
+        env:
+          REF: ${{ inputs.ref || env.DEFAULT_REF }}
+          TAG_INPUT: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          tag="${TAG_INPUT:-${REF//\//-}}"
+          if ! [[ "$tag" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+            echo "::error::'$tag' is not a valid image tag"; exit 1
+          fi
+          src_sha="$(git -C src rev-parse HEAD)"
+          pkg_sha="$(git -C packaging rev-parse --short=7 HEAD)"
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/${IMAGE_NAME}"
+          {
+            echo "image=${image}"
+            echo "tag=${tag}"
+            # Immutable: the moving tag above is re-pushed when the packaging changes.
+            echo "pinned=${tag}-p${pkg_sha}"
+            echo "src_sha=${src_sha}"
+            echo "short_sha=${src_sha:0:7}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Building ${REF} (${src_sha}) as ${image}:${tag}" >> "$GITHUB_STEP_SUMMARY"
+
+      # The target directory is a BuildKit cache mount on the runner's root disk.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: src
+          file: packaging/stakecore/Dockerfile
+          # Loaded into the local daemon, not pushed: publishing waits for the tests.
+          load: true
+          tags: ${{ steps.names.outputs.image }}:${{ steps.names.outputs.tag }}
+          build-args: |
+            SHORT_SHA=${{ steps.names.outputs.short_sha }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ steps.names.outputs.src_sha }}
+            org.opencontainers.image.version=${{ steps.names.outputs.tag }}
+            org.opencontainers.image.description=Headless zebrad built from crosslink_monolith (a prototype; see the repository README)
+          # The build is one RUN layer holding only the binary, so an unchanged
+          # source ref with unchanged packaging is a cache hit, not an hour.
+          cache-from: type=gha,scope=${{ steps.names.outputs.tag }}
+          cache-to: type=gha,scope=${{ steps.names.outputs.tag }},mode=max
+
+      - name: Binary runs and prints its config
+        env:
+          IMAGE: ${{ steps.names.outputs.image }}:${{ steps.names.outputs.tag }}
+        run: |
+          set -euo pipefail
+          docker image inspect "$IMAGE" --format 'image size: {{.Size}} bytes'
+          docker run --rm "$IMAGE" zebrad --version
+          # The config a node with no file and no ZEBRA_* variables runs with: the
+          # seed peers, the network magic and the ports this release expects.
+          docker run --rm "$IMAGE" zebrad generate
+
+      # Starts the node the way the Nomad job does (headless, miner and wallet off)
+      # and requires two things that need no peer: the process is still up after
+      # 90 s, and it printed its finalizer address. Whether it found the network is
+      # shown in the log but not asserted — a CI runner has no inbound ports.
+      - name: Node starts headless
+        if: github.event_name == 'push' || inputs.start_test
+        env:
+          IMAGE: ${{ steps.names.outputs.image }}:${{ steps.names.outputs.tag }}
+        run: |
+          set -euo pipefail
+          docker run -d --name node \
+            -e ZEBRA_MINING__INTERNAL_MINER=false \
+            -e ZEBRA_CROSSLINK__DISABLE_THE_HEADLESS_WALLET=true \
+            -e ZEBRA_RPC__ENABLE_COOKIE_AUTH=true \
+            -e ZEBRA_STATE__NETWORK_LOCAL_PORT=12001 \
+            -e ZEBRA_CROSSLINK__PUBLIC_ADDRESS=127.0.0.1:12301 \
+            -e ZEBRA_TRACING__USE_COLOR=false \
+            "$IMAGE"
+          sleep 90
+          docker logs node > node.log 2>&1 || true
+          echo "::group::node log (last 200 lines)"; tail -n 200 node.log; echo "::endgroup::"
+          # The ports a deployment has to account for, read from the container's
+          # network namespace with the runner's own ss (the image ships none).
+          echo "::group::listening sockets"
+          pid="$(docker inspect -f '{{.State.Pid}}' node)"
+          if [ "$pid" != "0" ]; then sudo nsenter -t "$pid" -n ss -lntup || true; fi
+          echo "::endgroup::"
+          running="$(docker inspect -f '{{.State.Running}}' node)"
+          docker rm -f node >/dev/null
+          if [ "$running" != "true" ]; then
+            echo "::error::zebrad exited within 90 s"; exit 1
+          fi
+          if ! grep -q 'finalizer address:' node.log; then
+            echo "::error::no 'finalizer address:' line in the first 90 s of the log"; exit 1
+          fi
+          grep -m1 'finalizer address:' node.log
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish
+        env:
+          IMAGE: ${{ steps.names.outputs.image }}
+          TAG: ${{ steps.names.outputs.tag }}
+          PINNED: ${{ steps.names.outputs.pinned }}
+        run: |
+          set -euo pipefail
+          docker tag "$IMAGE:$TAG" "$IMAGE:$PINNED"
+          docker push "$IMAGE:$TAG"
+          docker push "$IMAGE:$PINNED"
+          digest="$(docker image inspect "$IMAGE:$TAG" --format '{{index .RepoDigests 0}}')"
+          {
+            echo "### Published"
+            echo "- \`$IMAGE:$TAG\` (moves when the packaging changes)"
+            echo "- \`$IMAGE:$PINNED\` (does not move — pin this one in the jobspec)"
+            echo "- \`$digest\`"
+          } >> "$GITHUB_STEP_SUMMARY"
