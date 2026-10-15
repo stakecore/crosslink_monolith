@@ -37,9 +37,11 @@ on:
         default: true
 
 env:
-  # The upstream release the featurenet currently runs. Tags are per-chain: the
+  # The upstream release the featurenet currently runs. v15 (2026-10-13) is a network
+  # upgrade on the SAME chain at height 55,296 — same state directory, no resync.
+  # Tags are per-chain otherwise: the
   # state directory name is compiled in, so a new release can mean a new network.
-  DEFAULT_REF: v14
+  DEFAULT_REF: v15
   IMAGE_NAME: zebra-crosslink
 
 permissions:
