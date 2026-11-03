@@ -9,7 +9,7 @@ file outside `stakecore/` and `.github/workflows/stakecore-image.yml` is touched
 |---|---|
 | [Dockerfile](Dockerfile) | Two stages, repository root as context: `cargo build --locked --release -p zebrad`, then upstream's runtime layout and entrypoint on `debian:trixie-slim`. |
 | [Dockerfile.dockerignore](Dockerfile.dockerignore) | The build context as an allow-list: the `zebra-crosslink` workspace and the siblings it reaches with `../`. |
-| [../.github/workflows/stakecore-image.yml](../.github/workflows/stakecore-image.yml) | Builds, starts the node for 90 s, then publishes to `ghcr.io/<owner>/zebra-crosslink`. |
+| [../.github/workflows/stakecore-image.yml](../.github/workflows/stakecore-image.yml) | Builds, starts the node for 90 s, then publishes to `ghcr.io/<owner>/zebra-crosslink` (or another `zebra-crosslink-*` name, the `image_name` input). |
 
 ## Branches
 
@@ -18,6 +18,11 @@ file outside `stakecore/` and `.github/workflows/stakecore-image.yml` is touched
 - The source that gets built is a separate ref (`DEFAULT_REF` in the workflow, or the
   `ref` input). A new upstream release is a one-line bump; our own patch is a branch
   off the release tag, built with `ref: <branch>` and `tag: v14-stakecore.1`.
+- A build of a ref that joins ANOTHER network takes the `image_name` input, so it is
+  published beside the featurenet image, never over it. Upstream `dev` currently
+  compiles in the nightly network ("CNi1"): our tag `v17-rc.1` on it is built with
+  `ref: v17-rc.1` and `image_name: zebra-crosslink-nightly`, and deployed by
+  `run-node.sh --nightly` in the stakecore-nomad repo.
 
 ## Running it
 

@@ -31,6 +31,10 @@ on:
         description: "Image tag (empty = the ref, with / replaced by -)"
         required: false
         default: ""
+      image_name:
+        description: "Image name under ghcr.io/<owner>/ (empty = zebra-crosslink). zebra-crosslink-nightly for a build of upstream dev, which joins the nightly network, not the featurenet"
+        required: false
+        default: ""
       start_test:
         description: "Start the node for 90 s against the live network before publishing"
         type: boolean
@@ -44,6 +48,8 @@ env:
   # Tags are per-chain otherwise: the
   # state directory name is compiled in, so a new release can mean a new network.
   DEFAULT_REF: v16
+  # The featurenet's image. Another network's build takes the image_name input, so a
+  # nightly image can never be pulled by a jobspec pinned to this name.
   IMAGE_NAME: zebra-crosslink
 
 permissions:
@@ -79,17 +85,25 @@ jobs:
         env:
           REF: ${{ inputs.ref || env.DEFAULT_REF }}
           TAG_INPUT: ${{ inputs.tag }}
+          NAME_INPUT: ${{ inputs.image_name }}
         run: |
           set -euo pipefail
           tag="${TAG_INPUT:-${REF//\//-}}"
           if ! [[ "$tag" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
             echo "::error::'$tag' is not a valid image tag"; exit 1
           fi
+          name="${NAME_INPUT:-$IMAGE_NAME}"
+          if ! [[ "$name" =~ ^zebra-crosslink(-[a-z0-9]+)*$ ]]; then
+            echo "::error::'$name' is not zebra-crosslink or zebra-crosslink-<suffix>"; exit 1
+          fi
           src_sha="$(git -C src rev-parse HEAD)"
           pkg_sha="$(git -C packaging rev-parse --short=7 HEAD)"
-          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/${IMAGE_NAME}"
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/${name}"
           {
             echo "image=${image}"
+            # The featurenet image keeps its old cache scope (the bare tag), so this
+            # input costs its builds nothing; another name gets a scope of its own.
+            if [ "$name" = "$IMAGE_NAME" ]; then echo "cache_scope=${tag}"; else echo "cache_scope=${name}-${tag}"; fi
             echo "tag=${tag}"
             # Immutable: the moving tag above is re-pushed when the packaging changes.
             echo "pinned=${tag}-p${pkg_sha}"
@@ -123,8 +137,8 @@ jobs:
             org.opencontainers.image.description=Headless zebrad built from crosslink_monolith (a prototype; see the repository README)
           # The build is one RUN layer holding only the binary, so an unchanged
           # source ref with unchanged packaging is a cache hit, not an hour.
-          cache-from: type=gha,scope=${{ steps.names.outputs.tag }}
-          cache-to: type=gha,scope=${{ steps.names.outputs.tag }},mode=max
+          cache-from: type=gha,scope=${{ steps.names.outputs.cache_scope }}
+          cache-to: type=gha,scope=${{ steps.names.outputs.cache_scope }},mode=max
 
       - name: Binary runs and prints its config
         env:
