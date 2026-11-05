@@ -45,9 +45,12 @@ env:
   # upgrade on the SAME chain at height 55,296 — same state directory, no resync.
   # v16 (2026-11-02) is the same chain again, with no activation height: security
   # fixes, and a node that halts 14 days past height 115,800 (end of support).
+  # v17 (2026-11-05, upstream tag v17_rc1 — a pre-release named "Version 17") is the
+  # same chain once more, with a network upgrade at height 165,000 that v16 never
+  # reaches (it halts at 164,184). Not our nightly tag v17-rc.1: that one is on dev.
   # Tags are per-chain otherwise: the
   # state directory name is compiled in, so a new release can mean a new network.
-  DEFAULT_REF: v16
+  DEFAULT_REF: v17_rc1
   # The featurenet's image. Another network's build takes the image_name input, so a
   # nightly image can never be pulled by a jobspec pinned to this name.
   IMAGE_NAME: zebra-crosslink

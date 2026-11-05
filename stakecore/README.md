@@ -23,6 +23,9 @@ file outside `stakecore/` and `.github/workflows/stakecore-image.yml` is touched
   compiles in the nightly network ("CNi1"): our tag `v17-rc.1` on it is built with
   `ref: v17-rc.1` and `image_name: zebra-crosslink-nightly`, and deployed by
   `run-node.sh --nightly` in the stakecore-nomad repo.
+- Two tags, one letter apart: upstream's `v17_rc1` (underscore, on `main`) is the
+  featurenet's Version 17 and the `DEFAULT_REF`; our `v17-rc.1` (dash and dot, on `dev`)
+  is the nightly build. They share nothing past v16.
 
 ## Running it
 
