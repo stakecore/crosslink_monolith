@@ -51,9 +51,13 @@ env:
   # The final tag v17 (2026-11-12) is v17_rc1 plus 14 fixes, no new rules: wallet
   # auto-shielding (#307), BFT round and restore fixes, WAL capped at 1 GiB, and STP
   # vendored under tenderlink/ (already in the build context).
+  # v18 (2026-11-17) is the same chain and state directory again, but NEW NETWORKING:
+  # one encrypted endpoint and port (the STP one) for PoW sync, BFT and tx relay, which
+  # v17 nodes cannot reach; legacy TCP off by default; FeaturenetUpgrade3 at 189,000.
+  # Its STP transport is a git dependency again (shielded_transport_pigeon), not vendored.
   # Tags are per-chain otherwise: the
   # state directory name is compiled in, so a new release can mean a new network.
-  DEFAULT_REF: v17
+  DEFAULT_REF: v18
   # The featurenet's image. Another network's build takes the image_name input, so a
   # nightly image can never be pulled by a jobspec pinned to this name.
   IMAGE_NAME: zebra-crosslink
@@ -172,7 +176,7 @@ jobs:
             -e ZEBRA_CROSSLINK__DISABLE_THE_HEADLESS_WALLET=true \
             -e ZEBRA_RPC__ENABLE_COOKIE_AUTH=true \
             -e ZEBRA_STATE__NETWORK_LOCAL_PORT=12001 \
-            -e ZEBRA_CROSSLINK__PUBLIC_ADDRESS=127.0.0.1:12301 \
+            -e ZEBRA_CROSSLINK__PUBLIC_ADDRESS=127.0.0.1:12001 \
             -e ZEBRA_TRACING__USE_COLOR=false \
             "$IMAGE"
           sleep 90
